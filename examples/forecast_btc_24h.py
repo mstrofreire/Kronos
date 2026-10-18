@@ -24,8 +24,9 @@ from model import Kronos, KronosTokenizer, KronosPredictor
 
 
 def fetch_binance(symbol, interval, limit):
+    # Binance's public market-data mirror; api.binance.com answers 451 from some regions.
     resp = requests.get(
-        "https://api.binance.com/api/v3/klines",
+        "https://data-api.binance.vision/api/v3/klines",
         params={"symbol": symbol, "interval": interval, "limit": limit + 1},
         timeout=30,
     )
