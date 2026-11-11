@@ -4,7 +4,8 @@ Scan a list of tickers with Kronos and estimate short-term rebound odds.
 Data sources (first one that works):
   1. CSV files in --csv-dir named <TICKER>.csv with columns
      timestamps/date, open, high, low, close, volume
-  2. Twelve Data API (daily bars). The key is read from TWELVEDATA_API_KEY,
+  2. Cboe public CDN delayed daily history (no key needed).
+  3. Twelve Data API (daily bars). The key is read from TWELVEDATA_API_KEY,
      or injected by a proxy via the Authorization header.
 
 Example:
@@ -28,6 +29,30 @@ def load_csv(path):
     ts_col = "timestamps" if "timestamps" in df.columns else "date"
     df["timestamps"] = pd.to_datetime(df[ts_col])
     return df.sort_values("timestamps").reset_index(drop=True)
+
+
+def load_cboe(ticker):
+    """Free delayed daily history published on Cboe's public CDN (no API key)."""
+    url = f"https://cdn.cboe.com/api/global/delayed_quotes/charts/historical/{ticker}.json"
+    r = requests.get(url, timeout=30)
+    r.raise_for_status()
+    df = pd.DataFrame(r.json()["data"])
+    df["timestamps"] = pd.to_datetime(df["date"])
+    for c in ["open", "high", "low", "close", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna(subset=["open", "high", "low", "close", "volume"])
+    return df.sort_values("timestamps").reset_index(drop=True)
+
+
+def load_any(ticker, csv_dir=None):
+    csv = os.path.join(csv_dir, f"{ticker}.csv") if csv_dir else None
+    if csv and os.path.exists(csv):
+        return load_csv(csv)
+    try:
+        return load_cboe(ticker)
+    except Exception as e:  # fall back to Twelve Data
+        print(f"[{ticker}] Cboe failed ({e}); trying Twelve Data", flush=True)
+        return load_twelvedata(ticker)
 
 
 def load_twelvedata(ticker, n=600):
@@ -72,8 +97,7 @@ def main():
 
     rows = []
     for t in args.tickers:
-        csv = os.path.join(args.csv_dir, f"{t}.csv") if args.csv_dir else None
-        df = load_csv(csv) if csv and os.path.exists(csv) else load_twelvedata(t)
+        df = load_any(t, args.csv_dir)
         df = df.tail(args.lookback).reset_index(drop=True)
         last = df["close"].iloc[-1]
         x_ts = df["timestamps"]
